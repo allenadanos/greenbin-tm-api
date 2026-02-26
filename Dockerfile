@@ -14,6 +14,7 @@ RUN npm install --production
 
 COPY model ./model
 COPY server.js ./
+COPY supabaseStorage.js ./
 
 EXPOSE 3000
 
