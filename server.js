@@ -1,9 +1,11 @@
+require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
 const tf = require('@tensorflow/tfjs-node');
 const fs = require('fs');
 const path = require('path');
+const { initSupabase, generatePublicUrl, uploadImageAsync, generateFileName } = require('./supabaseStorage');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -72,7 +74,12 @@ app.get('/', (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', modelLoaded: !!model });
+  const supabaseConfigured = initSupabase();
+  res.json({
+    status: 'healthy',
+    modelLoaded: !!model,
+    storageEnabled: supabaseConfigured
+  });
 });
 
 app.get('/info', (req, res) => {
@@ -99,7 +106,9 @@ app.post('/predict', upload.single('image'), async (req, res) => {
       return res.status(400).json({ error: 'No image file provided' });
     }
 
-    console.log(`Processing image: ${req.file.originalname}, size: ${req.file.size} bytes`);
+    const deviceId = req.body.deviceId || req.query.deviceId || 'unknown';
+
+    console.log(`Processing image: ${req.file.originalname}, size: ${req.file.size} bytes, device: ${deviceId}`);
 
     const inputTensor = await preprocessImage(req.file.buffer);
 
@@ -118,9 +127,17 @@ app.post('/predict', upload.single('image'), async (req, res) => {
 
     console.log(`Prediction: ${topPrediction.label} (${(topPrediction.confidence * 100).toFixed(2)}%)`);
 
+    const fileName = generateFileName(req.file.originalname, topPrediction.label, deviceId);
+    const expectedUrl = generatePublicUrl(fileName);
+
+    uploadImageAsync(req.file.buffer, fileName);
+
     res.json({
       prediction: topPrediction.label,
       confidence: topPrediction.confidence,
+      deviceId: deviceId,
+      expectedImageUrl: expectedUrl,
+      storageUpload: 'background',
       allPredictions: results.map(r => ({
         ...r,
         confidencePercent: `${(r.confidence * 100).toFixed(2)}%`
@@ -139,6 +156,7 @@ app.use((err, req, res, next) => {
 });
 
 loadModel().then(() => {
+  initSupabase();
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
